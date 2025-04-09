@@ -3,12 +3,11 @@ import os
 from dataclasses import dataclass
 
 from PIL import Image
-import numpy as np
-import pandas as pd
+
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
-from torchvision.transforms import v2
+
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
@@ -16,7 +15,9 @@ from torchvision.datasets import CIFAR10, CIFAR100, MNIST, FashionMNIST
 
 from sampler import MintermSampler
 
-from typing import List, Tuple
+from typing import Tuple
+
+import logging
 
 @dataclass
 class Batch:
@@ -72,87 +73,6 @@ class CELEBATransform(object):
     def __call__(self, sample: Image) -> Tensor:
         x = self.transform(sample)
         return x
-    
-
-class CXR14Transform(object):
-    def __init__(self, split: str, img_size: int) -> None:
-        if split.lower() == "train":
-            self.transform = T.Compose([v2.ToImage(),
-                                        v2.ToDtype(torch.uint8, scale=True),
-                                        v2.Resize(img_size),
-                                        v2.ToDtype(torch.float32, scale=True),
-                                        v2.RandomHorizontalFlip()])
-        else:
-            self.transform = T.Compose([v2.ToImage(),
-                                        v2.ToDtype(torch.uint8, scale=True),
-                                        v2.Resize(img_size),
-                                        v2.ToDtype(torch.float32, scale=True)])
-            
-    def __call__(self, sample: Image) -> Tensor:
-        x = self.transform(sample)
-        return x
-
-class CXR14(object):
-    def __init__(
-        self,
-        split: str,
-        root: str,
-        transform = None
-    ):
-        self.root = root
-        self.transform = transform
-
-        df = pd.read_csv(f"{root}/Data_Entry_2017_v2020.csv")
-
-        self.im_filenames = df["Image Index"].to_list()
-        self.labels = [labels.split("|") for labels in df["Finding Labels"].to_list()]
-
-        self.classes = np.unique([c for label_list in self.labels for c in label_list])
-        self.num_classes = len(self.classes)
-
-        self.class_to_idx = {c : i for i, c in enumerate(self.classes)}
-
-        self.im_filename_to_targets = {}
-        for i in range(len(self.im_filenames)):
-            im_filename = self.im_filenames[i]
-            label_list = self.labels[i]
-            target = torch.zeros((self.num_classes,))
-            for label in label_list:
-                idx = self.class_to_idx[label]
-                target += F.one_hot(torch.tensor(idx), self.num_classes)
-            self.im_filename_to_targets[im_filename] = target
-
-        self.targets = torch.stack(list(self.im_filename_to_targets.values()), dim=0)
-        self.targets = self.targets.to(torch.uint32).tolist()
-
-        if split.lower() == "train":
-            self.split_im_filenames = np.loadtxt(f"{root}/train_val_list.txt", dtype=np.chararray)
-            self.split_im_filenames = self.split_im_filenames[:78544]
-            self.targets = self.targets[:78544]
-        elif split.lower() == "val":
-            self.split_im_filenames = np.loadtxt(f"{root}/train_val_list.txt", dtype=np.chararray)
-            self.split_im_filenames = self.split_im_filenames[78544:]
-            self.targets = self.targets[78544:]
-        elif split.lower() == "test":
-            self.split_im_filenames = np.loadtxt(f"{root}/test_list.txt", dtype=np.chararray)
-        else:
-            raise ValueError(f"Unknown split {split}")
-        
-        self.length = len(self.split_im_filenames)
-
-    def __len__(self) -> int:
-        return self.length
-    
-    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor]:
-        im_filename = self.split_im_filenames[idx]
-        im_path = f"{self.root}/images/{im_filename}"
-        im = Image.open(im_path).convert('L')
-
-        if self.transform:
-            im = self.transform(im)
-            im = im.repeat(3, 1, 1)
-        return im, self.im_filename_to_targets[im_filename]
-
 
 
 class CELEBA(Dataset):
@@ -215,7 +135,7 @@ class CELEBA(Dataset):
         if self.transform:
             im = self.transform(im)
 
-        return im, torch.tensor(self.targets[idx])
+        return im, torch.tensor(self.targets[idx], dtype=torch.int32)
 
 def collate_fn(batch) -> Batch:
     labels = torch.stack([b[1] for b in batch], dim=0)
@@ -223,7 +143,7 @@ def collate_fn(batch) -> Batch:
     return Batch(images=images, labels=labels)
 
 def get_loader(
-    dataset,
+    dataset_name: str,
     split: str,
     img_size: int,
     batch_size: int,
@@ -232,18 +152,15 @@ def get_loader(
     persistent_workers: bool,
 ) -> DataLoader:
     split = split.lower()
-    dataset = dataset.upper()
+    dataset_name = dataset_name.upper()
 
     cifar10_root = "/mnt/localdisk/gabriel/nodocker/CIFAR10"
     cifar100_root = "/mnt/localdisk/gabriel/nodocker/CIFAR100"
     celeb_a_root = "/mnt/localdisk/gabriel/nodocker/CELEBA"
     mnist_root = "/mnt/localdisk/gabriel/nodocker/MNIST"
     fashionmnist_root = "/mnt/localdisk/gabriel/nodocker/FashionMNIST"
-    cxr14_root = "/mnt/localdisk/gabriel/nodocker/CXR14"
 
-    print(dataset)
-
-    if dataset == "MNIST":
+    if dataset_name == "MNIST":
         dataset = MNIST(
             root=mnist_root,
             train=(split == "train"),
@@ -261,7 +178,7 @@ def get_loader(
             collate_fn=collate_fn,
         )
 
-    elif dataset == "FASHIONMNIST":
+    elif dataset_name == "FASHIONMNIST":
         dataset = FashionMNIST(
             root=fashionmnist_root,
             train=(split == "train"),
@@ -279,7 +196,7 @@ def get_loader(
             collate_fn=collate_fn,
         )
 
-    elif dataset == "CIFAR10":
+    elif dataset_name == "CIFAR10":
         dataset = CIFAR10(
             root=cifar10_root,
             train=(split == "train"),
@@ -298,7 +215,7 @@ def get_loader(
             collate_fn=collate_fn,
         )
 
-    elif dataset == "CIFAR100":
+    elif dataset_name == "CIFAR100":
         dataset = CIFAR100(
             root=cifar100_root,
             train=(split == "train"),
@@ -327,7 +244,7 @@ def get_loader(
                 collate_fn=collate_fn,
             )
 
-    elif dataset == "CELEBA":
+    elif dataset_name == "CELEBA":
         dataset = CELEBA(
             root=celeb_a_root,
             class_select=["Bald",
@@ -358,33 +275,9 @@ def get_loader(
                 persistent_workers=persistent_workers,
                 collate_fn=collate_fn,
             )
-    elif dataset == "CXR14":
-        dataset = CXR14(
-            root=cxr14_root,
-            split=split,
-            transform=CXR14Transform(split=split, img_size=img_size),
-        )
-
-        if split == "train":
-            dataloader = DataLoader(
-                dataset,
-                batch_sampler=MintermSampler(dataset.targets, batch_size, 15, 15),
-                pin_memory=pin_memory,
-                num_workers=num_workers,
-                persistent_workers=persistent_workers,
-                collate_fn=collate_fn,
-            )
-        else:
-            dataloader = DataLoader(
-                dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                pin_memory=pin_memory,
-                num_workers=num_workers,
-                persistent_workers=persistent_workers,
-                collate_fn=collate_fn,
-            )
     else:
-        raise ValueError(f"Unkown dataset {dataset}")
+        raise ValueError(f"Unkown dataset {dataset_name}")
             
+    logging.info(f"Loaded {dataset_name}/{split} with {len(dataset)} samples")
+
     return dataloader

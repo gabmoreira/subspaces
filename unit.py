@@ -37,7 +37,7 @@ class Trainer(TrainUnit[Batch], EvalUnit[Batch], PredictUnit[Batch]):
         self._cfg = cfg
 
         self._metrics = {"multiclass_accuracy" : MulticlassAccuracy(),
-                         "multilabel_auprc" : MultilabelAUPRC(num_labels=15, average="macro")}
+                         "multilabel_auprc" : MultilabelAUPRC(num_labels=10, average="macro")}
         
     def tb_log_metrics(self, split: str) -> None:
         step_count = self.train_progress.num_steps_completed
@@ -52,17 +52,8 @@ class Trainer(TrainUnit[Batch], EvalUnit[Batch], PredictUnit[Batch]):
 
         data = copy_data_to_device(data, device=self._device)
 
-        try:
-            output = self._module(data)
-        except:
-            logging.error("Error in forward pass")
-            return
-
-        try:
-            output["loss"].backward()
-        except:
-            logging.error("Error in backward pass")
-            return
+        output = self._module(data)
+        output["loss"].backward()
 
         if self._cfg.train.optimizer.clip_grad_norm is not None:
             nn.utils.clip_grad_norm_(
@@ -73,10 +64,8 @@ class Trainer(TrainUnit[Batch], EvalUnit[Batch], PredictUnit[Batch]):
 
         step_count = self.train_progress.num_steps_completed
 
-        if (step_count+1) % 50 == 0 and get_global_rank() == 0:
+        if (step_count+1) % 20 == 0 and get_global_rank() == 0:
             self._tb_logger.log("loss/train", output["loss"].detach(), step_count)
-            self._tb_logger.log("x norm/train", output["x_norm"].detach(), step_count)
-            self._tb_logger.log("z norm/train", output["z_norm"].detach(), step_count)
         
             self._module.eval()
             self._module.update_minterms()
@@ -86,7 +75,6 @@ class Trainer(TrainUnit[Batch], EvalUnit[Batch], PredictUnit[Batch]):
 
     def on_train_epoch_end(self, state: State) -> None:
         self._module.update_minterms()
-        
         step_count = self.train_progress.num_steps_completed
 
         self._lr_scheduler.step()
@@ -95,11 +83,11 @@ class Trainer(TrainUnit[Batch], EvalUnit[Batch], PredictUnit[Batch]):
             torch.save(self._module.state_dict(), f)
         
         # Log inner products of basis vectors
-        x = torch.cat(self._module._minterm_samples, dim=0)
-        x = x[torch.randperm(len(x))[:512].sort()[0]]
+        x = torch.cat([v[:10] for v in self._module._minterm_samples.values()])
+        if self._module._kernel == "linear":
+            x = nn.functional.normalize(x, p=2, dim=-1)
         K = self._module.kernel(x, x)
         self._tb_logger.writer.add_image("Minterm kernel", K ** 2, step_count, dataformats="HW")
-
         self.tb_log_metrics("train")
 
     @torch.no_grad()

@@ -6,9 +6,9 @@ from omegaconf import DictConfig
 
 import torch
 from torch.optim import SGD
-from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import StepLR
 
-from model import Model
+from model import *
 from dataset import *
 
 from torchtnt.framework.callback import Callback
@@ -20,6 +20,7 @@ from torchtnt.utils.loggers.tensorboard import TensorBoardLogger
 from torchtnt.utils.env import init_from_env
 
 import logging
+from typing import List 
 
 from unit import Trainer
 
@@ -41,7 +42,7 @@ def main(cfg: DictConfig) -> None:
         device = torch.device(cfg.general.device)
 
     train_loader = get_loader(
-        dataset=cfg.train.dataset,
+        dataset_name=cfg.train.dataset,
         split="train",
         img_size=cfg.general.img_size,
         batch_size=cfg.train.batch_size,
@@ -51,7 +52,7 @@ def main(cfg: DictConfig) -> None:
     )
     
     val_loader = get_loader(
-        dataset=cfg.val.dataset,
+        dataset_name=cfg.val.dataset,
         split="val",
         img_size=cfg.general.img_size,
         batch_size=cfg.val.batch_size,
@@ -91,7 +92,6 @@ def main(cfg: DictConfig) -> None:
         cfg.train.scheduler.step_size,
         gamma=cfg.train.scheduler.gamma,
     )
-    # lr_scheduler = CosineAnnealingLR(optimizer, cfg.train.max_epochs, 5e-5)
 
     tb_logger = TensorBoardLogger(tb_path)
     lr_monitor = LearningRateMonitor(tb_logger)

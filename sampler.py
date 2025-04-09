@@ -20,19 +20,19 @@ class MintermSampler():
             axis=0,
             return_inverse=True,
         )
-
+        
         self._n_minterms = self._minterm_labels.max() + 1
 
-        self._minterm2idx = []
+        self._minterm_to_idx = []
         for m in range(self._n_minterms):
-            self._minterm2idx.append(np.where(self._minterm_labels == m)[0])
+            self._minterm_to_idx.append(np.where(self._minterm_labels == m)[0])
 
         if n_minterms_per_batch is None:
             self._n_minterms_per_batch = self._n_literals
         else:
             self._n_minterms_per_batch = n_minterms_per_batch
 
-    def __iter__(self):        
+    def __iter__(self):  
         for _ in range(self._n_batches):
             sel = np.random.choice(
                 np.arange(self._n_minterms),
@@ -41,7 +41,7 @@ class MintermSampler():
             )
             batch = []
             for minterm_label in sel:
-                batch.append(np.random.choice(self._minterm2idx[minterm_label],
+                batch.append(np.random.choice(self._minterm_to_idx[minterm_label],
                                               self._batch_size // self._n_minterms_per_batch))
             batch = np.concatenate(batch)
             yield (batch)
